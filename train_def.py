@@ -54,192 +54,94 @@ def rleToMask(rleString,height,width):
     
     return img
 
-def add_random_gaussian_noise(image,mean,variance,add_on):
+def get_data(path,ids,train=True):
+    """
+    Getting image and masks arrays
+    """
+    X = np.zeros((len(ids), im_height, im_width, 1), dtype=np.float32)
+    if train:
+        y = np.zeros((len(ids), im_height, im_width, 1), dtype=np.float32)
+    print('Getting and resizing images ... ')
+    for n, id_ in tqdm(enumerate(ids), total=len(ids)):
+        # Load images
+        img = load_img(path + '/images/' + id_, grayscale=True)
+        x_img = img_to_array(img)
+        x_img = resize(x_img, (128, 128, 1), mode='constant', preserve_range=True)
+
+        # Load masks
+        if train:
+            mask = img_to_array(load_img(path + '/masks/' + id_, grayscale=True))
+            mask = resize(mask, (128, 128, 1), mode='constant', preserve_range=True)
+
+        # Save images
+        X[n, ..., 0] = x_img.squeeze() / 255
+        if train:
+            y[n] = mask / 255
+    if train:
+        return X, y
+    else:
+        return X
+
+def add_random_gaussian_noise(image,mean,variance):
     """
     Generate noise to a given Image based on required noise type
     From: http://www.xiaoliangbai.com/2016/09/09/more-on-image-noise-generation
     
     Input parameters:
-        image: ndarray (input image data. It will be converted to float)
+        image: ndarray (input image data)
        
     """
-    if add_on == 'image':
-       row,col,ch= image.shape       
-       mu = mean
-       var = variance
-       sigma = var**0.5
-       gauss = np.array(image.shape)
-       gauss = np.random.normal(mu,sigma,(row,col,ch))
-       gauss = gauss.reshape(row,col,ch)
-       noisy = image + gauss
-       noisy_img_clipped = np.clip(noisy, 0, 255)
-       return noisy_img_clipped.astype('uint8')
-    else:
-       row,col= image.shape       
-       mu = mean
-       var = variance
-       sigma = var**0.5
-       gauss = np.array(image.shape)
-       gauss = np.random.normal(mu,sigma,(row,col))
-       gauss = gauss.reshape(row,col)
-       noisy = image + gauss
-       noisy_img_clipped = np.clip(noisy, 0, 255)
-       return noisy_img_clipped.astype('uint8')
+    row,col,ch= image.shape       
+    mu = mean
+    var = variance
+    sigma = var**0.5
+    gauss = np.array(image.shape)
+    gauss = np.random.normal(mu,sigma,(row,col,ch))
+    gauss = gauss.reshape(row,col,ch)
+    noisy = image + gauss
+    noisy_img_clipped = np.clip(noisy, 0, 255)
+    return noisy_img_clipped.astype('uint8')
 
-def generator(train_ids,data_type):
-  """
-  Generator to return inputs for UNet
-  
-  """
-  # Get and resize train images and masks
-  X = np.zeros((len(train_ids), im_height, im_width, im_chan), dtype=np.float32)
-  y = np.zeros((len(train_ids), im_height, im_width, 1), dtype=np.float32)
-  X_feat = np.zeros((len(train_ids), n_features), dtype=np.float32)
-  print('Getting and resizing train images and masks ... ')
-  sys.stdout.flush()
-  
-  if data_type == 'train':
-      for n, id_ in tqdm(enumerate(train_ids), total=len(train_ids)):
-          path = train_path
-
-          # Load X
-          img = load_img(path + '/images/' + id_, color_mode='grayscale')
-
-          x_img = img_to_array(img)
-          x_img = resize(x_img, (128, 128, 1), mode='constant', preserve_range=True)
-
-          # Create cumsum x
-          x_center_mean = x_img[border:-border, border:-border].mean()
-          x_csum = (np.float32(x_img)-x_center_mean).cumsum(axis=0)
-          x_csum -= x_csum[border:-border, border:-border].mean()
-          x_csum /= max(1e-3, x_csum[border:-border, border:-border].std())
-
-          # Load Y
-          mask = img_to_array(load_img(path + '/masks/' + id_, color_mode='grayscale'))
-          mask = resize(mask, (128, 128, 1), mode='constant', preserve_range=True)
-
-          # Save images
-          X[n, ..., 0] = x_img.squeeze() / 255
-          X[n, ..., 1] = x_csum.squeeze()
-          y[n] = mask / 255
-      return X,y
-  else:
-      for n, id_ in tqdm(enumerate(train_ids), total=len(train_ids)):
-          path = test_path
-
-          # Load X
-          img = load_img(path + '/images/' + id_, color_mode='grayscale')
-
-          x_img = img_to_array(img)
-          x_img = resize(x_img, (128, 128, 1), mode='constant', preserve_range=True)
-
-          # Create cumsum x
-          x_center_mean = x_img[border:-border, border:-border].mean()
-          x_csum = (np.float32(x_img)-x_center_mean).cumsum(axis=0)
-          x_csum -= x_csum[border:-border, border:-border].mean()
-          x_csum /= max(1e-3, x_csum[border:-border, border:-border].std())
-
-          # Save images
-          X[n, ..., 0] = x_img.squeeze() / 255
-          X[n, ..., 1] = x_csum.squeeze()
-      return X
-
-def add_samples(dataset,train_ids,count,mean,variance):
-  """
-  Creates maximum of 4000 images with noise added. Returns a list of updated train ids inclusive of added noisy images and clean masks
-  dataset: dataset class generated object
-  count: Number of samples
-  mean: Mean of Gaussian noise
-  variance: Variance of Gaussian noise
-  """
-  
-  #Creating samples by adding noise
-  list_valid_count = 4000
-  
-  if count > list_valid_count:
-      raise ValueError("You cannot input more than 4000")
-        
-  ids_list = np.random.choice(train_ids,count,replace=False)
-  img_count = len(ids_list)
-  for n in range(img_count):
-      im, mask = dataset[n]
-      transformed_image = add_random_gaussian_noise(im,mean,variance,add_on='image')
-      save_img(train_path + '/images/'+ train_ids[n].strip('.png')+ '_t'+str(mean)+'_'+str(variance)+ '.png',transformed_image,scale=True)
-      
-      transformed_mask = add_random_gaussian_noise(mask,mean,variance,add_on='mask')
-      
-      #save_img(train_path + '/masks/'+ train_ids[n].strip('.png')+ '_t'+str(mean)+'_'+str(variance)+ '.png',transformed_mask)
-      
-      
-      io.imsave(train_path + '/masks/'+ train_ids[n].strip('.png')+ '_t'+str(mean)+'_'+str(variance)+ '.png', transformed_mask)
-      
-  new_train_ids = next(os.walk(train_path+"images"))[2]  
-  #new_mask_ids = next(os.walk(train_path+"masks"))[2]
-  return new_train_ids
-
-train_mask = pd.read_csv('train.csv')
-#depth data
-depth = pd.read_csv('depths.csv')
+def image_generator(X_train,y_train,batch_size):
+    """
+    Custom image generator that adds Gaussian noise and generates
+    batches of images and masks arrays
+    
+    """
+    mean = 0.0
+    variance = np.random.uniform(0.01, 1.0)
+    #X_train,y_train = get_data(path_train,train_ids,train=True) # Get arrays          
+    batch_images = np.zeros((batch_size, 128,128,1))
+    batch_masks = np.zeros((batch_size,128,128,1))
+    while True:
+      for i in range(batch_size):
+          # choose random index in features
+          index= np.random.choice(len(X_train),1)[0]
+          batch_images[i] = add_random_gaussian_noise(X_train[index],mean,variance)
+          batch_masks[i] = add_random_gaussian_noise(y_train[index],mean,variance)
+      yield batch_images, batch_masks
+    
 #training path
-train_path = "./train/"
+path_train = "./"
+path_test = "./"
 
 #list of files
-file_list = list(train_mask['id'].values)
+train_ids = next(os.walk(path_train+"images"))[2]
+test_ids = next(os.walk(path_test+"test/images"))[2]
 
-import sys
-from tqdm import tqdm
-from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img, save_img
-from skimage.transform import resize
-from keras.models import Model, load_model
-from keras.layers import Input
-from keras.layers.core import Lambda, RepeatVector, Reshape
-from keras.layers.convolutional import Conv2D, Conv2DTranspose
-from keras.layers.pooling import MaxPooling2D
-from keras.layers.merge import concatenate
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-from keras import backend as K
-from sklearn.model_selection import train_test_split
-
-#train_ids = next(os.walk(train_path+"images"))[2]
-
-#train image + mask data
-train_mask = pd.read_csv('train.csv')
-
-#depth data
-depth = pd.read_csv('depths.csv')
 
 im_width = 128
 im_height = 128
 border = 5
-im_chan = 2 # Number of channels: first is original and second cumsum(axis=0)
+im_chan = 1 # Number of channels: first is original and second cumsum(axis=0)
 n_features = 1 # Number of extra features, like depth
 
-#training path
-train_path = "./train/"
-test_path = "./test/"
+X, y = get_data(path_train, train_ids, train=True)
+X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.15, random_state=2018)
 
-#list of files
-train_ids = next(os.walk(train_path+"images"))[2]
-test_ids = next(os.walk(test_path+"images"))[2]
+bs= 16
 
-#define our dataset using our class
-train_dataset = tg.TGSSaltDataset(train_path, train_ids,data_type='train')
-test_dataset = tg.TGSSaltDataset(test_path, test_ids,data_type='test')
-
-add_train_ids = add_samples(train_dataset,train_ids,count=4000,mean=1.0,variance=0.1)
-add_train_ids.extend(add_samples(train_dataset,train_ids,count=4000,mean=10.0,variance=0.1))
-add_train_ids = list(set(add_train_ids))
-X,y = generator(add_train_ids,data_type='train')
-
-X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.15, random_state=42)
-
-callbacks = [
-    #EarlyStopping(patience=5, verbose=1),
-    ReduceLROnPlateau(patience=3, verbose=1),
-    ModelCheckpoint('model-tgs-salt-1.h5', verbose=1, save_best_only=True, save_weights_only=True)
-]
-
-model = UNET.U_Net()
+model = U_Net()
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy']) # The mean_iou metrics seens to leak train and test values...
 
-results = model.fit({'img': X_train}, y_train, batch_size=16, epochs=50, callbacks=callbacks, validation_data=({'img': X_valid}, y_valid))
+results = model.fit_generator(image_generator(X_train,y_train,bs), steps_per_epoch=round(len(X_train)/bs), epochs=100, callbacks=callbacks,validation_data=(X_valid, y_valid))
